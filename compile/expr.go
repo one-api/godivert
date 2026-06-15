@@ -324,7 +324,6 @@ func makeVar(kind TokenKind) (Expr, error) {
 		{Kind: TokenTcpSeqNum},
 		{Kind: TokenTcpSrcPort},
 		{Kind: TokenTcpSyn},
-		{Kind: TokenTcpFin},
 		{Kind: TokenTcpUrg},
 		{Kind: TokenTcpUrgPtr},
 		{Kind: TokenTcpWindow},
