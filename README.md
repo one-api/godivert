@@ -1,34 +1,19 @@
 # GoDivert
 
-A high-performance, pure Go implementation of the WinDivert user-mode library.
-This package allows you to capture and inject network packets on Windows
-without the complexity of CGO or external C dependencies.
+A high-performance, pure Go implementation of the [WinDivert](https://github.com/basil00/WinDivert) and [FastDivert](https://github.com/one-api/FastDivert)(WIP) user-mode library.
 
-## Features
+GoDivert allows you to capture and inject network packets on Windows without the complexity of CGO or external C
+dependencies. It is designed for high-performance network monitoring, security, and traffic engineering.
 
-🚀 Zero CGO Dependency: Built entirely in pure Go using syscall/windows APIs. No GCC or MinGW required for your build
-pipeline.
+## Key Features
 
-🐹 Idiomatic Go: Designed with a Go-first mentality. Includes friendly error handling and structured types instead of raw
-C pointers.
-
-📦 Embedded Driver: Utilizes go:embed to bundle the .sys drivers directly into your binary. No more manual file
-management.
-
-⚡ Optimized Loading: Advanced driver loading and unloading logic to ensure stability and prevent resource leaks.
-
-📚 Educational & Clean: Highly readable codebase designed to be a learning resource for Windows kernel-mode/user-mode
-communication in Go.
+- **🚀 Zero CGO Dependency**: Built entirely in pure Go using `golang.org/x/sys/windows`. No GCC or MinGW required.
+- **🐹 Idiomatic Go**: Designed with a Go-first mentality, featuring friendly error handling and structured types.
+- **📦 Embedded Driver**: Bundles WinDivert drivers directly into your binary using `go:embed`.
+- **⚡ High Performance**: Optimized driver interaction for low-latency packet processing.
+- **🔍 Pure Go Filter Compiler**: Includes a complete filter compiler implemented in Go.
 
 ## Quick Start
-
-### Installation
-
-```shell
-go get github.com/one-api/godivert
-```
-
-### simple example
 
 ```go
 package main
@@ -38,10 +23,8 @@ import (
 )
 
 func main() {
-
-	// Open driver
-	filter := "!loopback and (tcp or udp)"
-	divert, err := godivert.New(filter, godivert.LayerNetwork, 0, 0)
+	// Open driver with a filter
+	divert, err := godivert.New("!loopback and (tcp or udp)", godivert.LayerNetwork, 0, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -66,20 +49,50 @@ func main() {
 
 ```
 
-Note: This demo code requires *Administrator Privileges* to run
+> [!IMPORTANT]
+> This library requires **Administrator Privileges** to run as it interacts with the Windows kernel.
 
-## Filter Syntax Examples
+## Examples
 
-```
-// Match outbound TCP traffic on port 443
-outbound && tcp.DstPort == 443
+GoDivert comes with several real-world examples under the [examples/](examples/) directory. These
+showcase how to use GoDivert for advanced network engineering, security, and performance analysis.
 
-// Match DNS queries
-udp.DstPort == 53
+### 1. Network Bandwidth Limiter & Latency Shaper
 
-// Inbound HTTP traffic
-inbound && (tcp.DstPort == 80 || tcp.DstPort == 8080)
-```
+Simulates poor network conditions (artificial latency, packet loss, and traffic rate-limiting) on specific IP/UDP/TCP
+traffic.
+
+* **Use Case**: Testing multiplayer games or mobile APIs under bad network conditions (similar to a programmatic,
+  lightweight CLI version of Clumsy).
+* **How to run**:
+  ```bash
+  # Inject 100ms latency, 5% packet loss, and limit speed to 256 KB/s
+  go run ./examples/bandwidth_limiter -latency 100 -loss 5.0 -bandwidth 256
+  ```
+
+### 2. DNS Sinkhole & Spoofing Firewall
+
+A packet-level DNS firewall. Intercepts outbound DNS queries, parses the queried domain names, and blocks/spoofs queries
+matching an ad/tracking blocklist to `127.0.0.1` / `::` instantly.
+
+* **Use Case**: Building custom network-wide ad-blockers or security gateways without modifying DNS settings or starting
+  a DNS server daemon.
+* **How to run**:
+  ```bash
+  go run ./examples/dns_sinkhole
+  ```
+
+### 3. Live Process Connection & Traffic Flow Monitor
+
+Monitors active TCP/UDP connections in real-time, resolves Windows process IDs (PIDs) to their process image names (e.g.
+`chrome.exe`, `spotify.exe`), and renders an interactive, colored terminal dashboard.
+
+* **Use Case**: Gaining complete, light-weight process-level network traffic visibility without bulky packet-capture
+  libraries.
+* **How to run**:
+  ```bash
+  go run ./examples/flow_monitor
+  ```
 
 ## Testing
 
@@ -89,23 +102,13 @@ Run tests with:
 go test ./...
 ```
 
-## References
-
-- [WinDivert Official Documentation](https://www.reqrypt.org/windivert-doc.html)
-
 ## Acknowledgments
 
-This project is a Go implementation based on the excellent work of Basil and the WinDivert project. 
+Based on the [WinDivert Project](https://github.com/basil00/WinDivert) by Basil.
 
-## License
+## License & Contact
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the LICENSE file for details.
-
-This project embeds the WinDivert32.sys and WinDivert64.sys binaries, which are part of the WinDivert project. These binaries are licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0). Copyright (c) Basil. For more information, please refer to the LICENSE-WINDIVERT file.
-
-## Contact
-
-If you have any questions, feedback, please feel free to reach out:
-
-* **GitHub Issues**: For bug reports and feature requests.
-* **Email**: [hello@one-api.net](mailto:hello@one-api.net)
+* **License**: This project is licensed under the MIT License.
+  Copyright (c) 2026 github.com/one-api.
+* WinDivert driver binaries are licensed under the LGPL-3.0.
+* **Contact**: [hello@one-api.net](mailto:hello@one-api.net) or file a GitHub Issue.

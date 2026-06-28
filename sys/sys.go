@@ -22,10 +22,13 @@ var sysFile32 []byte
 var sysFile64 []byte
 
 const (
-	DefaultDriverName       = "WinDivert"
+	// DefaultDriverName is the default name for the WinDivert driver.
+	DefaultDriverName = "WinDivert"
+	// DefaultInstallMutexName is the name of the global mutex used to synchronize driver installation.
 	DefaultInstallMutexName = "WinDivertDriverInstallMutex"
 )
 
+// LoadEmbedSysFile extracts the embedded driver and loads it into the system.
 func LoadEmbedSysFile() error {
 	var sysFile []byte
 	var sysFileName string
@@ -42,7 +45,7 @@ func LoadEmbedSysFile() error {
 	}
 
 	if len(sysFile) == 0 {
-		return fmt.Errorf("embedded driver file is empty")
+		return fmt.Errorf("embedded driver file is empty or not found for architecture %s", runtime.GOARCH)
 	}
 
 	// Extract to a temporary directory
@@ -54,16 +57,23 @@ func LoadEmbedSysFile() error {
 
 	// Always write the file to ensure it exists.
 	// Ignore error if file is locked (e.g. driver running).
-	_ = os.WriteFile(driverPath, sysFile, 0644)
+	if err := os.WriteFile(driverPath, sysFile, 0644); err != nil {
+		// If error is not "access denied" (which happens if driver is running), return error.
+		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) && !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			// On Windows, sharing violation or access denied usually means it's in use.
+			// We can ignore those, but others should be reported.
+		}
+	}
 
 	return LoadDriver(DefaultDriverName, driverPath, DefaultInstallMutexName)
 }
 
+// LoadDriver installs and starts driver.
 func LoadDriver(driverName, sysPath, mutexName string) error {
 	// Mutex to synchronize installation
 	mutexNameUTF16, err := syscall.UTF16PtrFromString(mutexName)
 	if err != nil {
-		return err
+		return fmt.Errorf("convert mutex name: %w", err)
 	}
 	mutex, err := windows.CreateMutex(nil, false, mutexNameUTF16)
 	if err != nil {
@@ -76,7 +86,7 @@ func LoadDriver(driverName, sysPath, mutexName string) error {
 		return fmt.Errorf("failed to wait for mutex: %w", err)
 	}
 	if event == windows.WAIT_FAILED {
-		return fmt.Errorf("wait for mutex failed")
+		return fmt.Errorf("wait for mutex failed: %w", windows.GetLastError())
 	}
 	defer windows.ReleaseMutex(mutex)
 

@@ -2,15 +2,21 @@ package types
 
 import "unsafe"
 
-type Layer int
+type Layer uint32
 
 const (
+	// LayerNetwork captures packets at the network layer.
 	LayerNetwork Layer = iota
+	// LayerNetworkForward captures packets at the network layer (forwarded).
 	LayerNetworkForward
+	// LayerFlow captures flow events.
 	LayerFlow
+	// LayerSocket captures socket events.
 	LayerSocket
+	// LayerReflect captures reflect events.
 	LayerReflect
 
+	// LayerMax is the maximum layer value.
 	LayerMax = LayerReflect
 )
 
@@ -69,13 +75,22 @@ const (
 	MtuMax                  = 40 + 0xFFFF
 )
 
+const (
+	HelperNoIPChecksum     = 0x01
+	HelperNoICMPChecksum   = 0x02
+	HelperNoICMPV6Checksum = 0x04
+	HelperNoTCPChecksum    = 0x08
+	HelperNoUDPChecksum    = 0x10
+)
+
+// Address represents the address structure, containing packet metadata.
 type Address struct {
-	Timestamp int64
-	Layer     uint8
-	Event     uint8
-	Flags     uint8
-	_         uint8
-	Reserved2 uint32
+	Timestamp int64  // Packet timestamp.
+	Layer     uint8  // Packet layer.
+	Event     uint8  // Packet event.
+	Flags     uint8  // Packet flags.
+	_         uint8  // Padding.
+	Reserved2 uint32 // Reserved.
 	union     [64]byte
 }
 
@@ -161,31 +176,34 @@ func (a *Address) SetUDPChecksum(v bool) {
 	}
 }
 
+// DataNetwork contains network-layer specific data.
 type DataNetwork struct {
-	IfIdx    uint32
-	SubIfIdx uint32
+	IfIdx    uint32 // Interface index.
+	SubIfIdx uint32 // Sub-interface index.
 }
 
+// DataFlow contains flow-layer specific data.
 type DataFlow struct {
-	EndpointId       uint64
-	ParentEndpointId uint64
-	ProcessId        uint32
-	LocalAddr        [4]uint32
-	RemoteAddr       [4]uint32
-	LocalPort        uint16
-	RemotePort       uint16
-	Protocol         uint8
+	EndpointId       uint64    // Endpoint ID.
+	ParentEndpointId uint64    // Parent endpoint ID.
+	ProcessId        uint32    // Process ID.
+	LocalAddr        [4]uint32 // Local IP address.
+	RemoteAddr       [4]uint32 // Remote IP address.
+	LocalPort        uint16    // Local port.
+	RemotePort       uint16    // Remote port.
+	Protocol         uint8     // Protocol.
 }
 
+// DataSocket contains socket-layer specific data.
 type DataSocket struct {
-	EndpointId       uint64
-	ParentEndpointId uint64
-	ProcessId        uint32
-	LocalAddr        [4]uint32
-	RemoteAddr       [4]uint32
-	LocalPort        uint16
-	RemotePort       uint16
-	Protocol         uint8
+	EndpointId       uint64    // Endpoint ID.
+	ParentEndpointId uint64    // Parent endpoint ID.
+	ProcessId        uint32    // Process ID.
+	LocalAddr        [4]uint32 // Local IP address.
+	RemoteAddr       [4]uint32 // Remote IP address.
+	LocalPort        uint16    // Local port.
+	RemotePort       uint16    // Remote port.
+	Protocol         uint8     // Protocol.
 }
 
 type DataReflect struct {

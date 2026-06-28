@@ -3,6 +3,8 @@ package raw
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -16,19 +18,23 @@ import (
 var ErrInvalidParameter = fmt.Errorf("invalid parameter")
 
 const (
+	// VersionMajorMin is the minimum supported driver major version.
 	VersionMajorMin = 2
 
+	// VersionMajor is the current supported driver major version.
 	VersionMajor = 2
+	// VersionMinor is the current supported driver minor version.
 	VersionMinor = 2
 
 	magicDll uint64 = 0x4C4C447669645724
 	magicSys uint64 = 0x5359537669645723
 )
 
+// NewOverlapped creates a new windows.Overlapped structure with a manual reset event.
 func NewOverlapped() (*windows.Overlapped, error) {
 	event, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
-		return nil, fmt.Errorf("CreateEvent: %w", err)
+		return nil, fmt.Errorf("failed to create event: %w", err)
 	}
 
 	var localOverlapped windows.Overlapped
@@ -37,6 +43,7 @@ func NewOverlapped() (*windows.Overlapped, error) {
 	return &localOverlapped, nil
 }
 
+// Open opens a handle with the default driver name.
 func Open(filter string, layer types.Layer, priority int16, flags types.Flag) (windows.Handle, error) {
 	return OpenWithName(sys.DefaultDriverName, filter, layer, priority, flags)
 }
@@ -47,6 +54,16 @@ func OpenWithName(name string, filter string, layer types.Layer, priority int16,
 
 	if layer > types.LayerMax {
 		return 0, fmt.Errorf("%w: invalid layer: %d", ErrInvalidParameter, layer)
+	}
+
+	// Apply mandatory layer-specific flags:
+	switch layer {
+	case types.LayerFlow:
+		flags |= types.FlagSniff | types.FlagRecvOnly
+	case types.LayerSocket:
+		flags |= types.FlagRecvOnly
+	case types.LayerReflect:
+		flags |= types.FlagSniff | types.FlagRecvOnly
 	}
 
 	if !flags.Valid() {
@@ -119,6 +136,7 @@ func OpenWithName(name string, filter string, layer types.Layer, priority int16,
 		unsafe.Pointer(&objectsBytes[0]), uint32(len(objectsBytes)),
 		overlapped,
 	)
+	runtime.KeepAlive(objectsBytes)
 	if err != nil {
 		_ = windows.CloseHandle(handle)
 		return 0, fmt.Errorf("ioctl startup: %w", err)
@@ -127,45 +145,84 @@ func OpenWithName(name string, filter string, layer types.Layer, priority int16,
 	return handle, nil
 }
 
-// Recv receive packet and address from driver,
-// buffer and address MUST be provided, can't be nil
+// Recv receives a packet and its address from the driver.
+// buffer and address MUST NOT be nil.
 func Recv(handle windows.Handle, buffer []byte, address *types.Address, overlapped *windows.Overlapped) (uint32, error) {
+	if address == nil {
+		return 0, fmt.Errorf("%w: address is nil", ErrInvalidParameter)
+	}
+	// Create a slice that points to the same memory as address to ensure it gets updated.
+	addrSlice := unsafe.Slice(address, 1)
+	ioLen, _, err := RecvEx(handle, buffer, addrSlice, 0, overlapped)
+	return ioLen, err
+}
 
-	addrLen := uint32(unsafe.Sizeof(types.Address{}))
+// RecvEx receives one or more packets and their addresses from the driver.
+// buffer and addresses MUST NOT be nil or empty.
+// flags is reserved and should be 0.
+// Returns the total bytes received in buffer, the total bytes written to addresses, and an error.
+func RecvEx(handle windows.Handle, buffer []byte, addresses []types.Address, flags uint64, overlapped *windows.Overlapped) (uint32, uint32, error) {
+	if len(addresses) == 0 {
+		return 0, 0, fmt.Errorf("%w: addresses slice is empty", ErrInvalidParameter)
+	}
+	if len(buffer) == 0 {
+		return 0, 0, fmt.Errorf("%w: buffer is empty", ErrInvalidParameter)
+	}
+
+	addrLenPtr := new(uint32)
+	*addrLenPtr = uint32(len(addresses) * int(unsafe.Sizeof(types.Address{})))
 	recv := types.IoctlRecv{
-		Addr:       uint64(uintptr(unsafe.Pointer(address))),
-		AddrLenPtr: uint64(uintptr(unsafe.Pointer(&addrLen))),
+		Addr:       uint64(uintptr(unsafe.Pointer(&addresses[0]))),
+		AddrLenPtr: uint64(uintptr(unsafe.Pointer(addrLenPtr))),
 	}
 
 	ioLen, err := ioControl(handle, types.IoctlCodeRecv,
 		unsafe.Pointer(&recv), uint32(unsafe.Sizeof(recv)),
 		unsafe.Pointer(&buffer[0]), uint32(len(buffer)),
 		overlapped)
+	runtime.KeepAlive(addresses)
+	runtime.KeepAlive(addrLenPtr)
+	runtime.KeepAlive(buffer)
 	if err != nil {
-		return ioLen, fmt.Errorf("ioctl: %w", err)
+		return ioLen, 0, err
 	}
 
-	return ioLen, nil
+	return ioLen, atomic.LoadUint32(addrLenPtr), nil
 }
 
-// Send inject packet into kernel
-// buffer and address MUST be provided, can't be nil
+// Send injects a packet into the network stack.
+// buffer and address MUST NOT be nil.
 func Send(handle windows.Handle, buffer []byte, address *types.Address, overlapped *windows.Overlapped) (uint32, error) {
 	if address == nil {
-		return 0, fmt.Errorf("address parameter is nil")
+		return 0, fmt.Errorf("%w: address is nil", ErrInvalidParameter)
+	}
+	return SendEx(handle, buffer, []types.Address{*address}, 0, overlapped)
+}
+
+// SendEx injects one or more packets into the network stack.
+// buffer and addresses MUST NOT be nil or empty.
+// flags is reserved and should be 0.
+func SendEx(handle windows.Handle, buffer []byte, addresses []types.Address, flags uint64, overlapped *windows.Overlapped) (uint32, error) {
+	if len(addresses) == 0 {
+		return 0, fmt.Errorf("%w: addresses slice is empty", ErrInvalidParameter)
+	}
+	if len(buffer) == 0 {
+		return 0, fmt.Errorf("%w: buffer is empty", ErrInvalidParameter)
 	}
 
 	send := types.IoctlSend{
-		Addr:    uint64(uintptr(unsafe.Pointer(address))),
-		AddrLen: uint64(unsafe.Sizeof(types.Address{})),
+		Addr:    uint64(uintptr(unsafe.Pointer(&addresses[0]))),
+		AddrLen: uint64(len(addresses) * int(unsafe.Sizeof(types.Address{}))),
 	}
 
 	ioLen, err := ioControl(handle, types.IoctlCodeSend,
 		unsafe.Pointer(&send), uint32(unsafe.Sizeof(send)),
 		unsafe.Pointer(&buffer[0]), uint32(len(buffer)),
 		overlapped)
+	runtime.KeepAlive(addresses)
+	runtime.KeepAlive(buffer)
 	if err != nil {
-		return ioLen, fmt.Errorf("ioctl: %w", err)
+		return ioLen, err
 	}
 
 	return ioLen, nil
@@ -250,7 +307,7 @@ func ioControl(
 func openOrInstallDriver(driverName string, noInstall bool) (handle windows.Handle, err error) {
 	utf16Name, err := syscall.UTF16PtrFromString("\\\\.\\" + driverName)
 	if err != nil {
-		return 0, fmt.Errorf("convert string [%s] to utf16: %w", driverName, err)
+		return 0, fmt.Errorf("convert driver name [%s] to UTF16: %w", driverName, err)
 	}
 
 	for i := 0; i < 2; i++ {
@@ -264,25 +321,23 @@ func openOrInstallDriver(driverName string, noInstall bool) (handle windows.Hand
 			windows.InvalidHandle,
 		)
 		if err == nil {
-			break
-		} else {
-			err = fmt.Errorf("win api CreateFile: %w", err)
+			return handle, nil
 		}
 
 		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 			if noInstall {
-				return 0, fmt.Errorf("open file with no install flag set: %w", err)
+				return 0, fmt.Errorf("driver not found and FlagNoInstall is set: %w", err)
 			}
 
-			if sys.DefaultDriverName == driverName {
-				err := sys.LoadEmbedSysFile()
-				if err != nil {
-					return 0, fmt.Errorf("load embed driver: %w", err)
+			if i == 0 && sys.DefaultDriverName == driverName {
+				if loadErr := sys.LoadEmbedSysFile(); loadErr != nil {
+					return 0, fmt.Errorf("failed to load embedded driver: %w", loadErr)
 				}
+				continue
 			}
-			continue
 		}
+		return 0, fmt.Errorf("failed to open Divert device: %w", err)
 	}
 
-	return handle, err
+	return 0, fmt.Errorf("failed to open Divert device after installation")
 }
